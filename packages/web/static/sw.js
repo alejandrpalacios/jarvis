@@ -2,7 +2,7 @@
 // app "instalable" y para que no se rompa del todo sin conexion. Prioriza
 // red fresca (es un chat en vivo) y cae al cache si no hay internet.
 const CACHE = 'jarvis-shell-v1';
-const SHELL = ['/', '/manifest.webmanifest', '/icon.svg'];
+const SHELL = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
