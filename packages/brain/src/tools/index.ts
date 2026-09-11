@@ -56,11 +56,11 @@ export const toolDefinitions: ToolDefinition[] = [
     function: {
       name: 'open_app',
       description:
-        'Abre una aplicacion conocida en el PC del usuario (navegadores, Spotify, VS Code, Bloc de notas, Calculadora, Explorador, etc.).',
+        'Abre cualquier aplicacion instalada en el PC del usuario. Busca por parecido en el indice real de apps instaladas, asi que no hace falta el nombre exacto -- intenta con lo que el usuario diga tal cual.',
       parameters: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Nombre de la app, ej. "spotify", "chrome", "vs code"' },
+          name: { type: 'string', description: 'Nombre o parte del nombre de la app, tal como lo dijo el usuario' },
         },
         required: ['name'],
       },

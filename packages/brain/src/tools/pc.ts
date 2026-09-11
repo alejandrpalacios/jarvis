@@ -13,48 +13,99 @@ import { promisify } from 'node:util';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 const execAsync = promisify(exec);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LAUNCH_SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'launch-app.ps1');
 
 // --- Abrir aplicaciones ---------------------------------------------------
-// Agrega mas alias aqui si quieres que Jarvis conozca otra app.
-const APP_ALIASES: Record<string, string> = {
-  chrome: 'chrome',
-  'google chrome': 'chrome',
-  brave: 'brave',
-  edge: 'msedge',
-  'microsoft edge': 'msedge',
-  'vs code': 'code',
-  'visual studio code': 'code',
-  code: 'code',
-  notepad: 'notepad',
-  bloc: 'notepad',
-  'bloc de notas': 'notepad',
-  calculadora: 'calc',
-  calculator: 'calc',
-  explorador: 'explorer',
-  'explorador de archivos': 'explorer',
-  explorer: 'explorer',
-  // Spotify se instala como app de Microsoft Store (AppX), no como .exe
-  // suelto -- se abre por su protocolo registrado, no por ruta de archivo.
-  spotify: 'spotify:',
-  word: 'winword',
-  excel: 'excel',
-  terminal: 'wt',
-  powershell: 'powershell',
-};
+// En vez de una lista fija de comandos, consultamos el mismo indice que
+// usa el menu Inicio de Windows (Get-StartApps) y elegimos la app cuyo
+// nombre mas se parezca a lo que pidio el usuario. Esto cubre TODO lo
+// instalado (clasico o de Microsoft Store) sin tener que listar cada app
+// a mano, y la ejecucion sigue siendo "lista blanca": el modelo nunca
+// puede lanzar nada que no exista de verdad en ese indice.
+
+interface StartApp {
+  Name: string;
+  AppID: string;
+}
+
+// Quita acentos (via NFD + rango de marcas diacriticas combinantes) para
+// que "Bloc de notas" y "bloc de notas" -- o "Notion" y "notion" -- matcheen
+// sin importar tildes.
+const DIACRITICS = /[̀-ͯ]/g;
+
+function normalize(s: string): string {
+  return s.normalize('NFD').replace(DIACRITICS, '').toLowerCase().trim();
+}
+
+async function getStartApps(): Promise<StartApp[]> {
+  const { stdout } = await execAsync('powershell -NoProfile -Command "Get-StartApps | ConvertTo-Json -Compress"');
+  const parsed = JSON.parse(stdout);
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+function findBestMatch(query: string, apps: StartApp[]): { app: StartApp | null; alternatives: string[] } {
+  const q = normalize(query);
+  const contains: StartApp[] = [];
+  const scored: { app: StartApp; score: number }[] = [];
+
+  for (const app of apps) {
+    const n = normalize(app.Name);
+    if (n === q) return { app, alternatives: [] };
+    if (n.includes(q) || q.includes(n)) contains.push(app);
+
+    const qWords = new Set(q.split(/\s+/).filter(Boolean));
+    const overlap = n.split(/\s+/).filter((w) => qWords.has(w)).length;
+    if (overlap > 0) scored.push({ app, score: overlap });
+  }
+
+  if (contains.length) {
+    contains.sort((a, b) => a.Name.length - b.Name.length);
+    return { app: contains[0], alternatives: contains.slice(1, 4).map((a) => a.Name) };
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  if (scored.length) {
+    return { app: scored[0].app, alternatives: scored.slice(1, 4).map((s) => s.app.Name) };
+  }
+
+  return { app: null, alternatives: [] };
+}
+
+async function launchAndMinimize(appId: string): Promise<boolean> {
+  const { stdout } = await execAsync(
+    `powershell -NoProfile -ExecutionPolicy Bypass -File "${LAUNCH_SCRIPT}" -AppId "${appId}"`
+  );
+  try {
+    return Boolean(JSON.parse(stdout).minimized);
+  } catch {
+    return false;
+  }
+}
 
 export async function openApp(name: string): Promise<string> {
-  const key = name.trim().toLowerCase();
-  const target = APP_ALIASES[key];
-  if (!target) {
-    return `No tengo "${name}" en mi lista de aplicaciones conocidas. Las que si conozco: ${Object.keys(APP_ALIASES).join(', ')}.`;
-  }
+  let apps: StartApp[];
   try {
-    await execAsync(`start "" "${target}"`);
-    return `Orden enviada para abrir ${name}.`;
+    apps = await getStartApps();
   } catch (err) {
-    return `No pude abrir ${name}: ${(err as Error).message}`;
+    return `No pude consultar las apps instaladas: ${(err as Error).message}`;
+  }
+
+  const { app, alternatives } = findBestMatch(name, apps);
+  if (!app) {
+    return `No encontre nada parecido a "${name}" entre tus apps instaladas. Dime el nombre exacto tal como aparece en el menu Inicio.`;
+  }
+
+  try {
+    const minimized = await launchAndMinimize(app.AppID);
+    const nota = app.Name.toLowerCase() !== name.trim().toLowerCase() ? ` (encontre "${app.Name}")` : '';
+    const alt = alternatives.length ? ` Tambien pude referirme a: ${alternatives.join(', ')}.` : '';
+    return `Abriendo ${app.Name}${nota}${minimized ? ', minimizada para no interrumpirte' : ''}.${alt}`;
+  } catch (err) {
+    return `Encontre "${app.Name}" pero no pude abrirla: ${(err as Error).message}`;
   }
 }
 
