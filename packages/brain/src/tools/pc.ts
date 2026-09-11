@@ -59,9 +59,12 @@ export async function openApp(name: string): Promise<string> {
 }
 
 // Nombres de proceso reales (para taskkill) -- distinto del comando de
-// apertura, por eso es un mapa separado.
+// apertura, por eso es un mapa separado. Las apps de Microsoft Store
+// (Spotify, WhatsApp) no tienen un nombre de proceso fijo y predecible
+// (ej. "WhatsApp.Root.exe", "SpotifyLauncher.exe"), asi que usamos
+// comodines -- taskkill los soporta de forma nativa en /IM.
 const PROCESS_IMAGE_NAMES: Record<string, string> = {
-  spotify: 'Spotify.exe',
+  spotify: 'Spotify*',
   chrome: 'chrome.exe',
   'google chrome': 'chrome.exe',
   brave: 'brave.exe',
@@ -71,7 +74,7 @@ const PROCESS_IMAGE_NAMES: Record<string, string> = {
   'visual studio code': 'Code.exe',
   code: 'Code.exe',
   notepad: 'notepad.exe',
-  whatsapp: 'WhatsApp.exe',
+  whatsapp: 'WhatsApp*',
   discord: 'Discord.exe',
   word: 'winword.exe',
   excel: 'excel.exe',
