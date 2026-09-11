@@ -3,7 +3,14 @@
   import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
   import { auth, googleProvider } from '$lib/firebase';
   import { messages, subscribeToChat, sendMessage } from '$lib/stores/chat';
-  import { isVoiceSupported, listenOnce, speak, stopSpeaking } from '$lib/voice';
+  import {
+    isVoiceSupported,
+    listenOnce,
+    speak,
+    stopSpeaking,
+    startWakeWordMode,
+    stopWakeWordMode,
+  } from '$lib/voice';
 
   let user: User | null = null;
   let authReady = false;
@@ -15,6 +22,8 @@
   let voiceSupported = false;
   let listening = false;
   let autoSpeak = true;
+  let handsFree = false;
+  let awaitingCommand = false;
   let lastSeenMessageId: string | null = null;
   let sawInitialMessages = false;
 
@@ -24,6 +33,18 @@
       autoSpeak = localStorage.getItem('jarvis:autoSpeak') !== 'off';
     } catch {
       // Almacenamiento bloqueado (privado, permisos, etc.): nos quedamos con el default.
+    }
+
+    let wantedHandsFree = false;
+    try {
+      wantedHandsFree = localStorage.getItem('jarvis:handsFree') === 'on';
+    } catch {
+      // Sin almacenamiento persistente: arranca apagado, como el default.
+    }
+    if (wantedHandsFree && voiceSupported) {
+      // Intento silencioso: si el permiso de microfono ya se dio antes,
+      // esto arranca solo. Si no, el usuario solo tiene que tocar el boton.
+      enableHandsFree();
     }
 
     const stop = onAuthStateChanged(auth, (u) => {
@@ -37,6 +58,7 @@
   onDestroy(() => {
     unsub?.();
     stopSpeaking();
+    stopWakeWordMode();
   });
 
   $: if ($messages.length) {
@@ -68,7 +90,7 @@
   }
 
   async function handleMic() {
-    if (!voiceSupported || listening) return;
+    if (!voiceSupported || listening || handsFree) return;
     listening = true;
     try {
       const transcript = await listenOnce();
@@ -79,6 +101,45 @@
       console.error('[voz]', err);
     } finally {
       listening = false;
+    }
+  }
+
+  function enableHandsFree() {
+    const ok = startWakeWordMode({
+      onWake: () => {
+        awaitingCommand = true;
+        speak('Dime.');
+      },
+      onCommand: (text) => {
+        awaitingCommand = false;
+        void sendMessage(text);
+      },
+      onError: (message) => {
+        console.error('[manos libres]', message);
+        handsFree = false;
+        awaitingCommand = false;
+      },
+    });
+    handsFree = ok;
+    try {
+      localStorage.setItem('jarvis:handsFree', ok ? 'on' : 'off');
+    } catch {
+      // Sin almacenamiento persistente: el modo sigue funcionando en esta sesion.
+    }
+  }
+
+  function toggleHandsFree() {
+    if (handsFree) {
+      stopWakeWordMode();
+      handsFree = false;
+      awaitingCommand = false;
+      try {
+        localStorage.setItem('jarvis:handsFree', 'off');
+      } catch {
+        // ver nota de arriba
+      }
+    } else {
+      enableHandsFree();
     }
   }
 
@@ -132,6 +193,13 @@
       </div>
       <div class="header-actions">
         {#if voiceSupported}
+          <button
+            class="ghost icon {handsFree ? 'active' : ''}"
+            on:click={toggleHandsFree}
+            title={handsFree ? 'Apagar manos libres' : 'Manos libres: di "Jarvis" para hablarme'}
+          >
+            🎙️
+          </button>
           <button class="ghost icon" on:click={toggleAutoSpeak} title={autoSpeak ? 'Silenciar respuestas' : 'Activar voz'}>
             {autoSpeak ? '🔊' : '🔇'}
           </button>
@@ -139,6 +207,13 @@
         <button class="ghost" on:click={logout}>Salir</button>
       </div>
     </header>
+
+    {#if handsFree}
+      <p class="hands-free-banner">
+        <span class="rec-dot"></span>
+        {awaitingCommand ? 'Dime...' : 'Modo manos libres activo -- di "Jarvis" para hablarme'}
+      </p>
+    {/if}
 
     <div class="messages" bind:this={listEl}>
       {#if $messages.length === 0}
@@ -152,7 +227,7 @@
     </div>
 
     <form on:submit|preventDefault={handleSubmit}>
-      {#if voiceSupported}
+      {#if voiceSupported && !handsFree}
         <button
           type="button"
           class="mic {listening ? 'listening' : ''}"
@@ -244,6 +319,34 @@
     padding: 0.4rem 0.6rem;
     font-size: 1rem;
     line-height: 1;
+  }
+
+  button.ghost.icon.active {
+    background: #12374a;
+    border-color: #4fd1ff;
+  }
+
+  .hands-free-banner {
+    margin: 0;
+    padding: 0.5rem 1.2rem;
+    background: #0e2233;
+    border-bottom: 1px solid #163247;
+    color: #7fd4ff;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  .rec-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ff5f5f;
+    box-shadow: 0 0 6px #ff5f5f;
+    animation: pulse 1.2s ease-in-out infinite;
+    flex-shrink: 0;
   }
 
   button:disabled {
