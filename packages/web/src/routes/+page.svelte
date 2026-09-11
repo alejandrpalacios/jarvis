@@ -3,6 +3,7 @@
   import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
   import { auth, googleProvider } from '$lib/firebase';
   import { messages, subscribeToChat, sendMessage } from '$lib/stores/chat';
+  import { isVoiceSupported, listenOnce, speak, stopSpeaking } from '$lib/voice';
 
   let user: User | null = null;
   let authReady = false;
@@ -11,7 +12,20 @@
   let sending = false;
   let unsub: (() => void) | undefined;
 
+  let voiceSupported = false;
+  let listening = false;
+  let autoSpeak = true;
+  let lastSeenMessageId: string | null = null;
+  let sawInitialMessages = false;
+
   onMount(() => {
+    voiceSupported = isVoiceSupported();
+    try {
+      autoSpeak = localStorage.getItem('jarvis:autoSpeak') !== 'off';
+    } catch {
+      // Almacenamiento bloqueado (privado, permisos, etc.): nos quedamos con el default.
+    }
+
     const stop = onAuthStateChanged(auth, (u) => {
       user = u;
       authReady = true;
@@ -22,12 +36,50 @@
 
   onDestroy(() => {
     unsub?.();
+    stopSpeaking();
   });
 
   $: if ($messages.length) {
     tick().then(() => {
       listEl?.scrollTo({ top: listEl.scrollHeight, behavior: 'smooth' });
     });
+
+    const last = $messages[$messages.length - 1];
+    if (!sawInitialMessages) {
+      // No leemos en voz alta el historial que ya existia al cargar la pagina.
+      lastSeenMessageId = last.id;
+      sawInitialMessages = true;
+    } else if (last.id !== lastSeenMessageId) {
+      lastSeenMessageId = last.id;
+      if (last.role === 'assistant' && autoSpeak) {
+        speak(last.content);
+      }
+    }
+  }
+
+  function toggleAutoSpeak() {
+    autoSpeak = !autoSpeak;
+    try {
+      localStorage.setItem('jarvis:autoSpeak', autoSpeak ? 'on' : 'off');
+    } catch {
+      // Sin almacenamiento persistente: el toggle sigue funcionando solo en esta sesion.
+    }
+    if (!autoSpeak) stopSpeaking();
+  }
+
+  async function handleMic() {
+    if (!voiceSupported || listening) return;
+    listening = true;
+    try {
+      const transcript = await listenOnce();
+      if (transcript) {
+        await sendMessage(transcript);
+      }
+    } catch (err) {
+      console.error('[voz]', err);
+    } finally {
+      listening = false;
+    }
   }
 
   async function login() {
@@ -78,7 +130,14 @@
         <span class="dot"></span>
         Jarvis
       </div>
-      <button class="ghost" on:click={logout}>Salir</button>
+      <div class="header-actions">
+        {#if voiceSupported}
+          <button class="ghost icon" on:click={toggleAutoSpeak} title={autoSpeak ? 'Silenciar respuestas' : 'Activar voz'}>
+            {autoSpeak ? '🔊' : '🔇'}
+          </button>
+        {/if}
+        <button class="ghost" on:click={logout}>Salir</button>
+      </div>
     </header>
 
     <div class="messages" bind:this={listEl}>
@@ -93,8 +152,24 @@
     </div>
 
     <form on:submit|preventDefault={handleSubmit}>
-      <input type="text" placeholder="Escribele a Jarvis..." bind:value={draft} disabled={sending} />
-      <button type="submit" disabled={sending || !draft.trim()}>Enviar</button>
+      {#if voiceSupported}
+        <button
+          type="button"
+          class="mic {listening ? 'listening' : ''}"
+          on:click={handleMic}
+          disabled={sending}
+          title="Hablarle a Jarvis"
+        >
+          {listening ? '🎙️' : '🎤'}
+        </button>
+      {/if}
+      <input
+        type="text"
+        placeholder={listening ? 'Escuchando...' : 'Escribele a Jarvis...'}
+        bind:value={draft}
+        disabled={sending || listening}
+      />
+      <button type="submit" disabled={sending || listening || !draft.trim()}>Enviar</button>
     </form>
   {/if}
 </main>
@@ -165,9 +240,52 @@
     padding: 0.4rem 1rem;
   }
 
+  button.ghost.icon {
+    padding: 0.4rem 0.6rem;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
   button:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .mic {
+    flex-shrink: 0;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 50%;
+    border: 1px solid #223244;
+    background: #0b0f16;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .mic.listening {
+    background: #12374a;
+    border-color: #4fd1ff;
+    box-shadow: 0 0 12px rgba(79, 209, 255, 0.5);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.08);
+    }
   }
 
   header {
