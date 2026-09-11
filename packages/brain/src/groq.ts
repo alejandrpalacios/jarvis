@@ -8,4 +8,4 @@ if (!apiKey) {
 }
 
 export const groq = new Groq({ apiKey });
-export const GROQ_MODEL = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+export const GROQ_MODEL = process.env.GROQ_MODEL ?? 'openai/gpt-oss-120b';
