@@ -90,8 +90,12 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
   };
 }
 
-export function speak(text: string): void {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text) return;
+/** onEnd se dispara siempre al terminar de hablar (o si se corta a mitad). Sirve para que la UI sepa cuando el orbe deja de "hablar". */
+export function speak(text: string, onEnd?: () => void): void {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text) {
+    onEnd?.();
+    return;
+  }
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = LANG;
@@ -104,14 +108,18 @@ export function speak(text: string): void {
   // Jarvis habla -- si no, el microfono podria captar su propia voz por
   // los parlantes y disparar falsos positivos (o peor, reaccionar a su
   // propia respuesta como si fuera un comando nuevo).
-  if (wakeShouldRun && wakeRecognition) {
+  const pauseWake = wakeShouldRun && wakeRecognition;
+  if (pauseWake) {
     wakePausedForSpeech = true;
     try {
       wakeRecognition.stop();
     } catch {
       // ya estaba detenido; no pasa nada.
     }
-    utterance.onend = () => {
+  }
+
+  utterance.onend = () => {
+    if (pauseWake) {
       wakePausedForSpeech = false;
       if (wakeShouldRun) {
         try {
@@ -120,8 +128,9 @@ export function speak(text: string): void {
           // seguia corriendo por alguna razon; se ignora.
         }
       }
-    };
-  }
+    }
+    onEnd?.();
+  };
 
   window.speechSynthesis.speak(utterance);
 }

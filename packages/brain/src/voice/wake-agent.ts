@@ -16,6 +16,7 @@ import { db } from '../firebase.js';
 import { COLLECTIONS, CONVERSATION_ID } from '@jarvis/shared';
 import { say, isSpeaking } from './say.js';
 import { framesToWav } from './wav.js';
+import { getActiveSessionId } from '../session.js';
 
 const SILENCE_MS = 900; // silencio despues de hablar para dar el comando por terminado
 const MAX_COMMAND_MS = 8000; // limite duro por si la deteccion de silencio falla
@@ -102,7 +103,14 @@ export async function startWakeAgent(): Promise<void> {
       try {
         const text = await transcribe(wav, groq);
         if (text) {
-          await messagesRef.add({ role: 'user', content: text, createdAt: Date.now(), handled: false });
+          const sessionId = await getActiveSessionId(CONVERSATION_ID);
+          await messagesRef.add({
+            role: 'user',
+            content: text,
+            createdAt: Date.now(),
+            handled: false,
+            sessionId,
+          });
         }
       } catch (err) {
         console.error('[wake-agent] Error transcribiendo el comando:', err);

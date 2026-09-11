@@ -4,6 +4,7 @@ import { generateReply } from './conversation.js';
 import { COLLECTIONS, CONVERSATION_ID } from '@jarvis/shared';
 import { startWakeAgent } from './voice/wake-agent.js';
 import { watchRepliesAndSpeak } from './voice/watch-replies.js';
+import { getActiveSessionId } from './session.js';
 
 const messagesRef = db
   .collection(COLLECTIONS.conversations)
@@ -20,16 +21,22 @@ async function processMessage(docId: string) {
   const data = doc.data();
   if (!data || data.role !== 'user' || data.handled) return;
 
+  // Quien escribe el mensaje (app web, wake-agent nativo) ya le deberia
+  // haber puesto sessionId al crearlo. Si por lo que sea no lo trae
+  // (mensajes viejos, algo que se salto el flujo), lo resolvemos aca.
+  const sessionId: string = data.sessionId ?? (await getActiveSessionId(CONVERSATION_ID));
+
   // Marcamos como manejado ANTES de llamar al modelo para que un reinicio
   // del brain a mitad de proceso no lo vuelva a contestar dos veces.
-  await messagesRef.doc(docId).update({ handled: true });
+  await messagesRef.doc(docId).update({ handled: true, sessionId });
 
   try {
-    const reply = await generateReply(CONVERSATION_ID);
+    const reply = await generateReply(CONVERSATION_ID, sessionId);
     await messagesRef.add({
       role: 'assistant',
       content: reply,
       createdAt: Date.now(),
+      sessionId,
     });
   } catch (err) {
     console.error('[jarvis-brain] Error generando respuesta:', err);
@@ -37,6 +44,7 @@ async function processMessage(docId: string) {
       role: 'assistant',
       content: `Se me cruzaron los cables (${(err as Error).message}). Revisa la consola del cerebro.`,
       createdAt: Date.now(),
+      sessionId,
     });
   }
 }

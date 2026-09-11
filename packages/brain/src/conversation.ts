@@ -14,11 +14,12 @@ async function loadMemoryBlock(): Promise<string> {
   return `\n\nCOSAS QUE YA SABES DE ${USER_NAME.toUpperCase()}:\n${facts}`;
 }
 
-async function loadHistory(conversationId: string): Promise<ChatMessage[]> {
+async function loadHistory(conversationId: string, sessionId: string): Promise<ChatMessage[]> {
   const snap = await db
     .collection(COLLECTIONS.conversations)
     .doc(conversationId)
     .collection('messages')
+    .where('sessionId', '==', sessionId)
     .orderBy('createdAt', 'asc')
     .limitToLast(HISTORY_LIMIT)
     .get();
@@ -27,12 +28,18 @@ async function loadHistory(conversationId: string): Promise<ChatMessage[]> {
 
 /**
  * Genera la respuesta de Jarvis para el estado actual de la conversacion.
+ * Solo mira el historial de la sesion activa (ver @jarvis/shared/session):
+ * lo de sesiones anteriores queda archivado en Firestore, pero no se usa
+ * como contexto, para no mezclar charlas que ya terminaron.
  * Corre un mini loop de tool-calling: si el modelo pide ejecutar una
  * herramienta, la corremos y le devolvemos el resultado hasta que conteste
  * en texto normal (o hasta MAX_TOOL_ROUNDS, para no quedar en bucle).
  */
-export async function generateReply(conversationId: string): Promise<string> {
-  const [memoryBlock, history] = await Promise.all([loadMemoryBlock(), loadHistory(conversationId)]);
+export async function generateReply(conversationId: string, sessionId: string): Promise<string> {
+  const [memoryBlock, history] = await Promise.all([
+    loadMemoryBlock(),
+    loadHistory(conversationId, sessionId),
+  ]);
 
   const systemPrompt =
     buildSystemPrompt({

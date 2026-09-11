@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
   import { auth, googleProvider } from '$lib/firebase';
-  import { messages, subscribeToChat, sendMessage } from '$lib/stores/chat';
+  import { messages, subscribeToChat, sendMessage, startNewSession } from '$lib/stores/chat';
   import {
     isVoiceSupported,
     listenOnce,
@@ -11,6 +11,14 @@
     startWakeWordMode,
     stopWakeWordMode,
   } from '$lib/voice';
+
+  // Frases de control que no se mandan a Jarvis como pregunta: cambian la
+  // interfaz directamente, al toque, sin esperar ninguna respuesta del cerebro.
+  const OPEN_CHAT_PATTERN = /activa (el )?modo chat|abre (el )?chat|muestra (el )?chat/i;
+  const CLOSE_CHAT_PATTERN = /cierra (el )?modo chat|cierra (el )?chat|oculta (el )?chat/i;
+  const NEW_CHAT_PATTERN = /nueva conversaci[oó]n|empecemos de cero|borra (el )?chat/i;
+
+  type OrbState = 'idle' | 'listening' | 'awake' | 'thinking' | 'speaking';
 
   let user: User | null = null;
   let authReady = false;
@@ -24,8 +32,34 @@
   let autoSpeak = true;
   let handsFree = false;
   let awaitingCommand = false;
+  let thinking = false;
+  let speaking = false;
+  let chatVisible = false;
   let lastSeenMessageId: string | null = null;
   let sawInitialMessages = false;
+
+  $: orbState = (speaking
+    ? 'speaking'
+    : thinking
+      ? 'thinking'
+      : awaitingCommand
+        ? 'awake'
+        : handsFree
+          ? 'listening'
+          : 'idle') as OrbState;
+
+  $: statusText =
+    orbState === 'speaking'
+      ? 'Hablando...'
+      : orbState === 'thinking'
+        ? 'Pensando...'
+        : orbState === 'awake'
+          ? 'Dime...'
+          : orbState === 'listening'
+            ? 'Diga "Jarvis" para hablarme'
+            : voiceSupported
+              ? 'Toque el nucleo o diga "Jarvis"'
+              : 'Toque el nucleo para escribirme';
 
   onMount(() => {
     voiceSupported = isVoiceSupported();
@@ -73,8 +107,14 @@
       sawInitialMessages = true;
     } else if (last.id !== lastSeenMessageId) {
       lastSeenMessageId = last.id;
-      if (last.role === 'assistant' && autoSpeak) {
-        speak(last.content);
+      if (last.role === 'assistant') {
+        thinking = false;
+        if (autoSpeak) {
+          speaking = true;
+          speak(last.content, () => {
+            speaking = false;
+          });
+        }
       }
     }
   }
@@ -86,7 +126,10 @@
     } catch {
       // Sin almacenamiento persistente: el toggle sigue funcionando solo en esta sesion.
     }
-    if (!autoSpeak) stopSpeaking();
+    if (!autoSpeak) {
+      stopSpeaking();
+      speaking = false;
+    }
   }
 
   async function handleMic() {
@@ -95,6 +138,7 @@
     try {
       const transcript = await listenOnce();
       if (transcript) {
+        thinking = true;
         await sendMessage(transcript);
       }
     } catch (err) {
@@ -112,7 +156,24 @@
       },
       onCommand: (text) => {
         awaitingCommand = false;
-        void sendMessage(text);
+        const normalized = text.trim();
+
+        if (OPEN_CHAT_PATTERN.test(normalized)) {
+          chatVisible = true;
+          return;
+        }
+        if (CLOSE_CHAT_PATTERN.test(normalized)) {
+          chatVisible = false;
+          return;
+        }
+        if (NEW_CHAT_PATTERN.test(normalized)) {
+          void startNewSession();
+          chatVisible = false;
+          return;
+        }
+
+        thinking = true;
+        void sendMessage(normalized);
       },
       onError: (message) => {
         console.error('[manos libres]', message);
@@ -143,6 +204,18 @@
     }
   }
 
+  function openChat() {
+    chatVisible = true;
+  }
+
+  function closeChat() {
+    chatVisible = false;
+  }
+
+  async function newChat() {
+    await startNewSession();
+  }
+
   async function login() {
     try {
       await signInWithPopup(auth, googleProvider);
@@ -161,6 +234,7 @@
     const text = draft;
     draft = '';
     sending = true;
+    thinking = true;
     try {
       await sendMessage(text);
     } finally {
@@ -185,9 +259,34 @@
         <button on:click={login}>Conectar con Google</button>
       </div>
     </div>
+  {:else if !chatVisible}
+    <div class="orb-view">
+      <button class="orb-button" on:click={openChat} title="Abrir modo chat">
+        <div class="orb {orbState}"></div>
+      </button>
+      <p class="orb-status">{statusText}</p>
+
+      <div class="orb-toolbar">
+        {#if voiceSupported}
+          <button
+            class="ghost icon {handsFree ? 'active' : ''}"
+            on:click={toggleHandsFree}
+            title={handsFree ? 'Apagar manos libres' : 'Manos libres: di "Jarvis" para hablarme'}
+          >
+            🎙️
+          </button>
+          <button class="ghost icon" on:click={toggleAutoSpeak} title={autoSpeak ? 'Silenciar respuestas' : 'Activar voz'}>
+            {autoSpeak ? '🔊' : '🔇'}
+          </button>
+        {/if}
+        <button class="ghost icon" on:click={openChat} title="Escribirle a Jarvis">⌨️</button>
+        <button class="ghost" on:click={logout}>Salir</button>
+      </div>
+    </div>
   {:else}
     <header>
       <div class="brand">
+        <button class="ghost icon back" on:click={closeChat} title="Volver al nucleo">⟵</button>
         <span class="dot"></span>
         Jarvis
       </div>
@@ -204,6 +303,9 @@
             {autoSpeak ? '🔊' : '🔇'}
           </button>
         {/if}
+        <button class="ghost icon" on:click={newChat} title="Nueva conversacion (empieza sin arrastrar el contexto anterior)">
+          🗑️
+        </button>
         <button class="ghost" on:click={logout}>Salir</button>
       </div>
     </header>
@@ -224,6 +326,11 @@
           <p>{m.content}</p>
         </div>
       {/each}
+      {#if thinking}
+        <div class="bubble assistant thinking-bubble">
+          <span class="think-dot"></span><span class="think-dot"></span><span class="think-dot"></span>
+        </div>
+      {/if}
     </div>
 
     <form on:submit|preventDefault={handleSubmit}>
@@ -253,8 +360,8 @@
   :global(html, body) {
     margin: 0;
     height: 100%;
-    background: #05070d;
-    color: #e8f4ff;
+    background: #0a0704;
+    color: #ffe9d6;
     font-family:
       'Segoe UI',
       system-ui,
@@ -285,8 +392,8 @@
     height: 72px;
     margin: 0 auto 1rem;
     border-radius: 50%;
-    background: radial-gradient(circle, #4fd1ff 0%, #0e2f44 60%, transparent 70%);
-    box-shadow: 0 0 30px rgba(79, 209, 255, 0.5);
+    background: radial-gradient(circle, #ffd9a0 0%, #ff8a34 40%, #401d00 70%, transparent 75%);
+    box-shadow: 0 0 30px rgba(255, 138, 52, 0.5);
   }
 
   h1 {
@@ -295,12 +402,12 @@
   }
 
   p {
-    color: #9db4c9;
+    color: #c9a888;
   }
 
   button {
-    background: #4fd1ff;
-    color: #05070d;
+    background: #ff8a34;
+    color: #170b00;
     border: none;
     border-radius: 999px;
     padding: 0.6rem 1.4rem;
@@ -310,8 +417,8 @@
 
   button.ghost {
     background: transparent;
-    color: #9db4c9;
-    border: 1px solid #223244;
+    color: #c9a888;
+    border: 1px solid #3a2413;
     padding: 0.4rem 1rem;
   }
 
@@ -322,16 +429,22 @@
   }
 
   button.ghost.icon.active {
-    background: #12374a;
-    border-color: #4fd1ff;
+    background: #3a2410;
+    border-color: #ff8a34;
+  }
+
+  button.ghost.icon.back {
+    border: none;
+    padding: 0.2rem 0.4rem;
+    font-size: 1.1rem;
   }
 
   .hands-free-banner {
     margin: 0;
     padding: 0.5rem 1.2rem;
-    background: #0e2233;
-    border-bottom: 1px solid #163247;
-    color: #7fd4ff;
+    background: #201005;
+    border-bottom: 1px solid #3a2413;
+    color: #ffb877;
     font-size: 0.85rem;
     display: flex;
     align-items: center;
@@ -365,8 +478,8 @@
     width: 2.6rem;
     height: 2.6rem;
     border-radius: 50%;
-    border: 1px solid #223244;
-    background: #0b0f16;
+    border: 1px solid #3a2413;
+    background: #170e07;
     font-size: 1.1rem;
     display: flex;
     align-items: center;
@@ -375,9 +488,9 @@
   }
 
   .mic.listening {
-    background: #12374a;
-    border-color: #4fd1ff;
-    box-shadow: 0 0 12px rgba(79, 209, 255, 0.5);
+    background: #3a2410;
+    border-color: #ff8a34;
+    box-shadow: 0 0 12px rgba(255, 138, 52, 0.5);
     animation: pulse 1.2s ease-in-out infinite;
   }
 
@@ -396,7 +509,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.9rem 1.2rem;
-    border-bottom: 1px solid #131c28;
+    border-bottom: 1px solid #201304;
     flex-shrink: 0;
   }
 
@@ -412,8 +525,8 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #4fd1ff;
-    box-shadow: 0 0 8px #4fd1ff;
+    background: #ff8a34;
+    box-shadow: 0 0 8px #ff8a34;
   }
 
   .messages {
@@ -427,7 +540,7 @@
 
   .empty {
     margin: auto;
-    color: #56697c;
+    color: #5c4630;
   }
 
   .bubble {
@@ -445,38 +558,196 @@
 
   .bubble.user {
     align-self: flex-end;
-    background: #12374a;
-    color: #eaf7ff;
+    background: #3a2410;
+    color: #ffe9d6;
     border-bottom-right-radius: 4px;
   }
 
   .bubble.assistant {
     align-self: flex-start;
-    background: #11151d;
-    border: 1px solid #1c2531;
+    background: #150f09;
+    border: 1px solid #241708;
     border-bottom-left-radius: 4px;
+  }
+
+  .thinking-bubble {
+    display: flex;
+    gap: 0.3rem;
+    padding: 0.7rem 0.9rem;
+  }
+
+  .think-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ff8a34;
+    opacity: 0.5;
+    animation: thinkBounce 1.2s ease-in-out infinite;
+  }
+
+  .think-dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .think-dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+
+  @keyframes thinkBounce {
+    0%,
+    100% {
+      opacity: 0.35;
+      transform: translateY(0);
+    }
+    50% {
+      opacity: 1;
+      transform: translateY(-3px);
+    }
   }
 
   form {
     display: flex;
     gap: 0.6rem;
     padding: 0.8rem 1.2rem calc(0.8rem + env(safe-area-inset-bottom));
-    border-top: 1px solid #131c28;
+    border-top: 1px solid #201304;
     flex-shrink: 0;
   }
 
   input {
     flex: 1;
-    background: #0b0f16;
-    border: 1px solid #1c2531;
+    background: #170e07;
+    border: 1px solid #241708;
     border-radius: 999px;
     padding: 0.6rem 1rem;
-    color: #e8f4ff;
+    color: #ffe9d6;
     font-size: 1rem;
   }
 
   input:focus {
     outline: none;
-    border-color: #4fd1ff;
+    border-color: #ff8a34;
+  }
+
+  /* --- Vista "nucleo" (bolita), la pantalla por defecto ------------------ */
+
+  .orb-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.4rem;
+    padding: 1.5rem;
+  }
+
+  .orb-button {
+    background: none;
+    border: none;
+    padding: 2rem;
+    cursor: pointer;
+  }
+
+  .orb {
+    --size: min(46vw, 220px);
+    width: var(--size);
+    height: var(--size);
+    border-radius: 50%;
+    position: relative;
+    background: radial-gradient(circle at 50% 42%, #ffe3bb 0%, #ff8a34 38%, #6a2c00 72%, transparent 100%);
+    box-shadow: 0 0 70px 12px rgba(255, 138, 52, 0.45);
+    animation: breathe 4.5s ease-in-out infinite;
+    transition: box-shadow 0.3s ease;
+  }
+
+  .orb::before,
+  .orb::after {
+    content: '';
+    position: absolute;
+    inset: -16px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    border-top-color: rgba(255, 168, 92, 0.8);
+    border-right-color: rgba(255, 168, 92, 0.2);
+    animation: spin 7s linear infinite;
+  }
+
+  .orb::after {
+    inset: -32px;
+    border-top-color: rgba(255, 202, 143, 0.45);
+    animation: spin 11s linear infinite reverse;
+  }
+
+  .orb.listening {
+    animation: breathe 2.8s ease-in-out infinite;
+  }
+
+  .orb.awake {
+    animation: pulseFast 0.9s ease-in-out infinite;
+    box-shadow: 0 0 100px 18px rgba(255, 138, 52, 0.6);
+  }
+
+  .orb.thinking::before {
+    animation-duration: 1.1s;
+  }
+
+  .orb.thinking::after {
+    animation-duration: 1.7s;
+  }
+
+  .orb.speaking {
+    animation: speakPulse 0.55s ease-in-out infinite;
+    box-shadow: 0 0 90px 16px rgba(255, 154, 68, 0.6);
+  }
+
+  .orb-status {
+    margin: 0;
+    color: #c9a888;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+  }
+
+  .orb-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.05);
+    }
+  }
+
+  @keyframes pulseFast {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.12);
+    }
+  }
+
+  @keyframes speakPulse {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.07);
+    }
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 </style>

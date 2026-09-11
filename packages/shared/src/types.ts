@@ -11,6 +11,20 @@ export interface ChatMessage {
   createdAt: number;
   /** Solo aplica a mensajes de role 'user': si el cerebro ya lo proceso. */
   handled?: boolean;
+  /** A que sesion de charla pertenece (ver session.ts). Opcional solo por
+   * compatibilidad con mensajes viejos anteriores a este campo. */
+  sessionId?: string;
+}
+
+/**
+ * Fase "por momentos": en vez de una unica charla infinita, la conversacion
+ * se corta en sesiones. Este documento (uno por conversationId) guarda cual
+ * es la sesion activa ahora mismo; los mensajes viejos no se borran, solo
+ * dejan de contar como contexto activo una vez que su sesion expira.
+ */
+export interface ConversationState {
+  currentSessionId: string;
+  lastActivityAt: number;
 }
 
 export interface MemoryFact {
