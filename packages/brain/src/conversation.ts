@@ -40,7 +40,7 @@ export async function generateReply(conversationId: string): Promise<string> {
       capabilities: [
         'Conversar, razonar y ayudarte a pensar en lo que necesites.',
         'Recordar datos que le pidas guardar, y usarlos despues sin que se los repitas.',
-        'Abrir aplicaciones conocidas en tu PC (navegadores, Spotify, VS Code, Bloc de notas, Calculadora, Explorador...).',
+        'Abrir y cerrar aplicaciones conocidas en tu PC (navegadores, Spotify, VS Code, WhatsApp, Discord...).',
         'Subir/bajar el volumen y controlar reproduccion de medios (play, pausa, siguiente, anterior) en tu PC.',
         'Consultar el estado de tu PC: RAM libre, espacio en disco, procesos que mas CPU consumen.',
         'Listar y abrir archivos dentro de Descargas, Escritorio o Documentos (no fuera de esas carpetas).',

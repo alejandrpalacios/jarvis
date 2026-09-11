@@ -35,7 +35,9 @@ const APP_ALIASES: Record<string, string> = {
   explorador: 'explorer',
   'explorador de archivos': 'explorer',
   explorer: 'explorer',
-  spotify: `"${path.join(os.homedir(), 'AppData', 'Roaming', 'Spotify', 'Spotify.exe')}"`,
+  // Spotify se instala como app de Microsoft Store (AppX), no como .exe
+  // suelto -- se abre por su protocolo registrado, no por ruta de archivo.
+  spotify: 'spotify:',
   word: 'winword',
   excel: 'excel',
   terminal: 'wt',
@@ -49,10 +51,48 @@ export async function openApp(name: string): Promise<string> {
     return `No tengo "${name}" en mi lista de aplicaciones conocidas. Las que si conozco: ${Object.keys(APP_ALIASES).join(', ')}.`;
   }
   try {
-    await execAsync(`start "" ${target}`);
+    await execAsync(`start "" "${target}"`);
     return `Orden enviada para abrir ${name}.`;
   } catch (err) {
     return `No pude abrir ${name}: ${(err as Error).message}`;
+  }
+}
+
+// Nombres de proceso reales (para taskkill) -- distinto del comando de
+// apertura, por eso es un mapa separado.
+const PROCESS_IMAGE_NAMES: Record<string, string> = {
+  spotify: 'Spotify.exe',
+  chrome: 'chrome.exe',
+  'google chrome': 'chrome.exe',
+  brave: 'brave.exe',
+  edge: 'msedge.exe',
+  'microsoft edge': 'msedge.exe',
+  'vs code': 'Code.exe',
+  'visual studio code': 'Code.exe',
+  code: 'Code.exe',
+  notepad: 'notepad.exe',
+  whatsapp: 'WhatsApp.exe',
+  discord: 'Discord.exe',
+  word: 'winword.exe',
+  excel: 'excel.exe',
+};
+
+export async function closeApp(name: string): Promise<string> {
+  const key = name.trim().toLowerCase();
+  const image = PROCESS_IMAGE_NAMES[key];
+  if (!image) {
+    return `No tengo "${name}" en mi lista de aplicaciones que puedo cerrar. Las que si conozco: ${Object.keys(PROCESS_IMAGE_NAMES).join(', ')}.`;
+  }
+  try {
+    await execAsync(`taskkill /IM "${image}" /F`);
+    return `${name} cerrado.`;
+  } catch (err) {
+    // taskkill devuelve codigo 128 cuando el proceso no estaba corriendo --
+    // eso no es un fallo real, solo informativo.
+    if ((err as { code?: number }).code === 128) {
+      return `${name} no estaba abierto.`;
+    }
+    return `No pude cerrar ${name}: ${(err as Error).message}`;
   }
 }
 

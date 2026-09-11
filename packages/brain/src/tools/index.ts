@@ -1,6 +1,6 @@
 import { db } from '../firebase.js';
 import { COLLECTIONS } from '@jarvis/shared';
-import { openApp, systemVolume, systemInfo, listFiles, openPath } from './pc.js';
+import { openApp, closeApp, systemVolume, systemInfo, listFiles, openPath } from './pc.js';
 
 // Definimos las herramientas como un objeto plano en vez de usar los tipos
 // exactos del SDK de Groq (son estrictos y calcados de OpenAI). Al llamarlas
@@ -61,6 +61,20 @@ export const toolDefinitions: ToolDefinition[] = [
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Nombre de la app, ej. "spotify", "chrome", "vs code"' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'close_app',
+      description: 'Cierra (fuerza el cierre de) una aplicacion conocida que este abierta en el PC del usuario.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Nombre de la app, ej. "whatsapp", "spotify", "chrome"' },
         },
         required: ['name'],
       },
@@ -151,6 +165,9 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
 
     case 'open_app':
       return openApp(String(args.name));
+
+    case 'close_app':
+      return closeApp(String(args.name));
 
     case 'system_volume':
       return systemVolume(String(args.action), args.steps ? Number(args.steps) : undefined);
