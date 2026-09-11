@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Reglas deliberadamente simples: este es un asistente PERSONAL de un solo
+// usuario. Todo lo que pasa por Firestore (chat, memoria, comandos a
+// dispositivos) solo puede leerlo/escribirlo la cuenta de Google dueña del
+// proyecto. El "cerebro" (packages/brain) usa el Admin SDK y se salta estas
+// reglas por diseño (es el backend de confianza).
+//
+// Si algun dia agregas mas usuarios, cambia esto por reglas por-documento
+// basadas en request.auth.uid.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner() {
+      return request.auth != null
+        && request.auth.token.email == "alepalaciome@gmail.com";
+    }
+
+    match /{document=**} {
+      allow read, write: if isOwner();
+    }
+  }
+}

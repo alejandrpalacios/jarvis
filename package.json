@@ -1,0 +1,16 @@
+{
+  "name": "jarvis",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Asistente personal tipo Jarvis: cerebro en la nube (Groq) + Firestore para sincronizar PC y movil en tiempo real.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:brain": "npm run dev --workspace=packages/brain",
+    "dev:web": "npm run dev --workspace=packages/web",
+    "build:web": "npm run build --workspace=packages/web",
+    "typecheck:brain": "npm run typecheck --workspace=packages/brain",
+    "typecheck:web": "npm run check --workspace=packages/web"
+  }
+}
