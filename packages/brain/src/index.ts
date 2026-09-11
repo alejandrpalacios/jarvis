@@ -2,6 +2,8 @@ import 'dotenv/config';
 import { db } from './firebase.js';
 import { generateReply } from './conversation.js';
 import { COLLECTIONS, CONVERSATION_ID } from '@jarvis/shared';
+import { startWakeAgent } from './voice/wake-agent.js';
+import { watchRepliesAndSpeak } from './voice/watch-replies.js';
 
 const messagesRef = db
   .collection(COLLECTIONS.conversations)
@@ -70,3 +72,8 @@ messagesRef
   );
 
 console.log(`[jarvis-brain] Escuchando conversacion "${CONVERSATION_ID}"... Ctrl+C para apagar.`);
+
+// Manos libres nativo: si no hay PICOVOICE_ACCESS_KEY configurada, esto
+// se queda callado y todo lo demas sigue funcionando igual.
+watchRepliesAndSpeak();
+void startWakeAgent().catch((err) => console.error('[wake-agent] No pudo arrancar:', err));
