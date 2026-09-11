@@ -25,8 +25,8 @@ LO QUE PUEDES HACER AHORA MISMO:
 ${capabilityList}
 
 LO QUE TODAVIA NO PUEDES HACER (esta en camino, no lo prometas como si ya existiera):
-- Controlar el PC o el telefono de ${userName} directamente.
-- Encender o apagar dispositivos.
+- Controlar el telefono de ${userName}.
+- Encender o apagar el PC de forma remota (Wake-on-LAN), ni tocar archivos fuera de Descargas/Escritorio/Documentos.
 - Buscar cosas en internet en tiempo real.
 - Ejecutar automatizaciones o recordatorios programados.
 
